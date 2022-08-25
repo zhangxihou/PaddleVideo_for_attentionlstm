@@ -13,12 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-try:
-    import av
-except ImportError as e:
-    print(
-        f"Warning! {e}, [av] package and it's dependencies is required for TimeSformer and other models."
-    )
+import av
 import cv2
 import pickle
 import decord as de
@@ -28,6 +23,8 @@ from ..registry import PIPELINES
 
 
 def get_start_end_idx(video_size, clip_size, clip_idx, num_clips):
+    # if clip_size>=video_size:
+    #     clip_size=video_size-1
     delta = max(video_size - clip_size, 0)
     if clip_idx == -1:  # here
         # Random temporal sampling.
@@ -219,34 +216,34 @@ class FeatureDecoder(object):
         data = pickle.load(open(filepath, 'rb'), encoding='bytes')
 
         record = data
-        nframes = record['nframes'] if 'nframes' in record else record[
-            b'nframes']
-        rgb = record['feature'].astype(
-            float) if 'feature' in record else record[b'feature'].astype(float)
-        audio = record['audio'].astype(
-            float) if 'audio' in record else record[b'audio'].astype(float)
+        # nframes = record['nframes'] if 'nframes' in record else record[
+            # b'nframes']
+        rgb = record['image_feature'].astype(
+            float) if 'image_feature' in record else record[b'feature'].astype(float)
+        # audio = record['audio'].astype(
+            # float) if 'audio' in record else record[b'audio'].astype(float)
         if self.has_label:
-            label = record['label'] if 'label' in record else record[b'label']
-            one_hot_label = self.make_one_hot(label, self.num_classes)
+            label = np.array(results['labels']).astype('float32')
+            #one_hot_label=self.make_one_hot(label,self.num_classes)
 
-        rgb = rgb[0:nframes, :]
-        audio = audio[0:nframes, :]
+        # rgb = rgb[0:nframes, :]
+        # audio = audio[0:nframes, :]
 
         rgb = self.dequantize(rgb,
                               max_quantized_value=2.,
                               min_quantized_value=-2.)
-        audio = self.dequantize(audio,
-                                max_quantized_value=2,
-                                min_quantized_value=-2)
+        # audio = self.dequantize(audio,
+                                # max_quantized_value=2,
+                                # min_quantized_value=-2)
 
-        if self.has_label:
-            results['labels'] = one_hot_label.astype("float32")
+        # if self.has_label:
+        #     results['labels'] = one_hot_label.astype("float32")
 
         feat_pad_list = []
         feat_len_list = []
         mask_list = []
-        vitem = [rgb, audio]
-        for vi in range(2):  #rgb and audio
+        vitem = [rgb]
+        for vi in range(1):  #rgb and audio
             if vi == 0:
                 prefix = "rgb_"
             else:
@@ -285,63 +282,5 @@ class FeatureDecoder(object):
     def make_one_hot(self, label, dim=3862):
         one_hot_label = np.zeros(dim)
         one_hot_label = one_hot_label.astype(float)
-        for ind in label:
-            one_hot_label[int(ind)] = 1
+        one_hot_label[label] = 1
         return one_hot_label
-
-
-@PIPELINES.register()
-class ActionFeatureDecoder(object):
-    """
-        Perform feature decode operations on footballaction
-    """
-    def __init__(self, num_classes, max_len=512, has_label=True):
-        self.max_len = max_len
-        self.num_classes = num_classes
-        self.has_label = has_label
-
-    def __call__(self, results):
-        """
-        Perform feature decode operations.
-        return:
-            List where each item is a numpy array after decoder.
-        """
-        #1. load pkl
-        #2. parse to rgb/audio/
-        #3. padding
-
-        filepath = results['filename']
-        data = pickle.load(open(filepath, 'rb'), encoding='bytes')
-
-        pkl_data = data
-        rgb = pkl_data['image_feature'].astype(float)
-        audio = pkl_data['audio_feature'].astype(float)
-        label_id_info = pkl_data['label_info']
-        label_cls = [label_id_info['label']]
-        label_one = int(label_cls[0])
-        if len(label_cls) > 1:
-            label_index = random.randint(0, 1)
-            label_one = int(label_cls[label_index])
-        iou_norm = float(label_id_info['norm_iou'])
-        results['labels'] = np.array([label_one])
-        results['iou_norm'] = float(iou_norm)
-
-        vitem = [rgb, audio]
-        for vi in range(2):  #rgb and audio
-            if vi == 0:
-                prefix = "rgb_"
-            else:
-                prefix = "audio_"
-            feat = vitem[vi]
-            results[prefix + 'len'] = feat.shape[0]
-            #feat pad step 1. padding
-            feat_add = np.zeros((self.max_len - feat.shape[0], feat.shape[1]),
-                                dtype=np.float32)
-            feat_pad = np.concatenate((feat, feat_add), axis=0)
-            results[prefix + 'data'] = feat_pad.astype("float32")
-            #feat pad step 2. mask
-            feat_mask_origin = np.ones(feat.shape, dtype=np.float32)
-            feat_mask = np.concatenate((feat_mask_origin, feat_add), axis=0)
-            results[prefix + 'mask'] = feat_mask.astype("float32")
-
-        return results
